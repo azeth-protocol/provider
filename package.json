@@ -1,0 +1,64 @@
+{
+  "name": "@azeth/provider",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "x402 service provider tooling for Azeth — gate Hono endpoints behind x402 payments with payment-agreement support",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/azeth-protocol/provider.git"
+  },
+  "homepage": "https://azeth.ai",
+  "keywords": [
+    "azeth",
+    "x402",
+    "provider",
+    "hono",
+    "payments",
+    "machine-economy",
+    "middleware"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./examples": {
+      "types": "./dist/examples/index.d.ts",
+      "import": "./dist/examples/index.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "dev": "tsc -b --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@azeth/common": "^0.1.0",
+    "@x402/core": "^2.4.0",
+    "@x402/evm": "^2.4.0",
+    "@x402/extensions": "^2.4.0",
+    "@x402/hono": "^2.4.0",
+    "hono": "^4.7.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
