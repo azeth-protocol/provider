@@ -1,6 +1,6 @@
 {
   "name": "@azeth/provider",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "x402 service provider tooling for Azeth — gate Hono endpoints behind x402 payments with payment-agreement support",
   "license": "MIT",
@@ -39,11 +39,10 @@
     "build": "tsc --project tsconfig.json",
     "dev": "tsc -b --watch",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "release": "pnpm build && changeset publish"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@azeth/common": "^0.2.0",
+    "@azeth/common": "^0.2.1",
     "@x402/core": "^2.4.0",
     "@x402/evm": "^2.4.0",
     "@x402/extensions": "^2.4.0",
@@ -54,8 +53,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0",
-    "@changesets/cli": "^2.27.0"
+    "vitest": "^3.0.0"
   },
   "publishConfig": {
     "access": "public"
