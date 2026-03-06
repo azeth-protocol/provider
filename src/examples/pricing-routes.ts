@@ -1,10 +1,48 @@
 import { Hono } from 'hono';
-import { AzethError, TOKENS, type SupportedChainName } from '@azeth/common';
+import { AzethError, TOKENS, type SupportedChainName, type CatalogEntry } from '@azeth/common';
 import { paymentMiddlewareFromHTTPServer } from '@x402/hono';
 import type { x402HTTPResourceServer } from '@x402/core/server';
 import type { ProviderEnv } from '../middleware/pre-settled.js';
 import { isSupportedCoin, getPrice, getFreshPrice } from './price-feed.js';
 import { preSettledPaymentMiddleware } from '../middleware/pre-settled.js';
+
+/** Supported coin IDs for the catalog — single source of truth matching price-feed.ts */
+const CATALOG_COINS = [
+  'bitcoin', 'ethereum', 'solana', 'usd-coin', 'chainlink',
+  'aave', 'uniswap', 'maker', 'compound-governance-token',
+] as const;
+
+/** Build the off-chain service catalog for the pricing API */
+function buildPricingCatalog(): CatalogEntry[] {
+  const priceStr = process.env['X402_PRICE_FEED_PRICE'] ?? '$0.01';
+  return [
+    {
+      name: 'Get Price',
+      path: '/{coinId}',
+      method: 'GET',
+      description: 'Get real-time price data for a cryptocurrency. Returns price in USD, 24h change, market cap, and volume.',
+      pricing: `${priceStr}/request`,
+      params: { coinId: CATALOG_COINS.join(', ') },
+      paid: true,
+      accepts: [
+        {
+          network: 'eip155:84532',
+          asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as `0x${string}`,
+          symbol: 'USDC',
+        },
+      ],
+    },
+    {
+      name: 'Get Fresh Price',
+      path: '/{coinId}?fresh=true',
+      method: 'GET',
+      description: 'Force-refresh price data bypassing cache. Same as Get Price but fetches live data from CoinGecko.',
+      pricing: `${priceStr}/request`,
+      params: { coinId: CATALOG_COINS.join(', ') },
+      paid: true,
+    },
+  ];
+}
 
 /** Create the x402-gated pricing routes.
  *
@@ -14,10 +52,24 @@ import { preSettledPaymentMiddleware } from '../middleware/pre-settled.js';
  *  - Payment agreement extension (subscription terms in 402 response)
  *  - Pre-settled smart account payments (X-Payment-Tx header bypass)
  *
- *  When httpServer is null, all routes return 503 (graceful degradation).
+ *  The root GET / serves the off-chain catalog (free, no payment required).
+ *  When httpServer is null, paid routes return 503 (graceful degradation).
  */
 export function createPricingRoutes(httpServer: x402HTTPResourceServer | null): Hono<ProviderEnv> {
   const app = new Hono<ProviderEnv>();
+
+  // ── Free catalog endpoint ──
+  // Serves the off-chain service catalog — the "menu card" describing available
+  // offerings, pricing, and accepted payment methods. No payment or auth required.
+  app.get('/', (c) => {
+    return c.json({
+      data: {
+        name: 'Azeth Price Feed',
+        description: 'x402-gated cryptocurrency price data API powered by Azeth',
+        catalog: buildPricingCatalog(),
+      },
+    });
+  });
 
   if (!httpServer) {
     app.get('/:coinId', (c) => {
@@ -46,8 +98,9 @@ export function createPricingRoutes(httpServer: x402HTTPResourceServer | null): 
   const priceNum = parseFloat(priceStr.replace('$', ''));
   const priceAtomicAmount = BigInt(Math.round(priceNum * 1e6));
 
+  // Payment middleware scoped to /:coinId — catalog root (/) is free.
   if (payTo && usdcAddress) {
-    app.use('*', preSettledPaymentMiddleware({
+    app.use('/:coinId', preSettledPaymentMiddleware({
       payTo,
       usdcAddress,
       priceAtomicAmount,
@@ -57,8 +110,8 @@ export function createPricingRoutes(httpServer: x402HTTPResourceServer | null): 
   }
 
   // x402 V2 middleware — handles 402, verify, settle, SIWx, extensions.
-  // Skipped when pre-settled payment was verified (preSettledVerified flag set).
-  app.use('*', async (c, next) => {
+  // Scoped to /:coinId only. Skipped when pre-settled payment was verified.
+  app.use('/:coinId', async (c, next) => {
     if ((c as unknown as Record<string, unknown>)['preSettledVerified']) {
       return next();
     }
@@ -74,10 +127,7 @@ export function createPricingRoutes(httpServer: x402HTTPResourceServer | null): 
     if (!isSupportedCoin(coinId)) {
       throw new AzethError('Unsupported coin', 'INVALID_INPUT', {
         coinId,
-        supported: [
-          'bitcoin', 'ethereum', 'solana', 'usd-coin', 'chainlink',
-          'aave', 'uniswap', 'maker', 'compound-governance-token',
-        ],
+        supported: [...CATALOG_COINS],
       });
     }
 
