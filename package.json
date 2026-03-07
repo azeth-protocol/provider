@@ -42,7 +42,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@azeth/common": "^0.2.4",
+    "@azeth/common": "^0.2.5",
     "@x402/core": "^2.4.0",
     "@x402/evm": "^2.4.0",
     "@x402/extensions": "^2.4.0",

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { AzethError, TOKENS, type SupportedChainName, type CatalogEntry } from '@azeth/common';
+import { AzethError, TOKENS, SUPPORTED_CHAINS, RPC_ENV_KEYS, type SupportedChainName, type CatalogEntry } from '@azeth/common';
 import { paymentMiddlewareFromHTTPServer } from '@x402/hono';
 import type { x402HTTPResourceServer } from '@x402/core/server';
 import type { ProviderEnv } from '../middleware/pre-settled.js';
@@ -104,7 +104,7 @@ export function createPricingRoutes(httpServer: x402HTTPResourceServer | null): 
       payTo,
       usdcAddress,
       priceAtomicAmount,
-      rpcUrl: process.env['AZETH_RPC_URL'] ?? process.env['BASE_RPC_URL'],
+      rpcUrl: process.env[RPC_ENV_KEYS[chainName]] ?? SUPPORTED_CHAINS[chainName].rpcDefault,
       chainName,
     }));
   }
