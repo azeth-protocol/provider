@@ -46,7 +46,7 @@ app.get('/api/data', (c) => c.json({ answer: 42 }));
 | Export | Description |
 |---|---|
 | `createX402Stack(config)` | Create x402 middleware + facilitator from explicit config |
-| `createX402StackFromEnv(options)` | Create from environment variables |
+| `createX402StackFromEnv(routes, overrides?)` | Create from env vars. Auto-resolves `payTo` to your smart account if not set. |
 | `LocalFacilitatorClient` | On-chain USDC settlement verification |
 
 ### Payment Agreements

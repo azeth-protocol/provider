@@ -10,7 +10,8 @@ import {
 } from 'viem';
 import { publicActions } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { TOKENS, AZETH_CONTRACTS, resolveViemChain, type SupportedChainName } from '@azeth/common';
+import { TOKENS, AZETH_CONTRACTS, SUPPORTED_CHAINS, RPC_ENV_KEYS, resolveViemChain, type SupportedChainName } from '@azeth/common';
+import { AzethFactoryAbi } from '@azeth/common/abis';
 import { x402Facilitator } from '@x402/core/facilitator';
 import { x402ResourceServer, x402HTTPResourceServer, type FacilitatorClient, type RoutesConfig } from '@x402/core/server';
 import type { PaymentPayload, PaymentRequirements, VerifyResponse, SettleResponse, SupportedResponse } from '@x402/core/types';
@@ -179,27 +180,42 @@ export function createX402Stack(
  *
  *  Unlike the server's version, this creates its own publicClient
  *  directly from the RPC URL — no dependency on external singletons.
+ *
+ *  **Payment recipient resolution (payTo):**
+ *  1. `overrides.payTo` — explicit smart account address (highest priority)
+ *  2. `X402_PAY_TO` env var — manual configuration
+ *  3. **Auto-resolve** — queries the AzethFactory on-chain for the owner's
+ *     first smart account (derived from `AZETH_PRIVATE_KEY`)
+ *
+ *  The auto-resolution ensures that providers using Azeth smart accounts
+ *  get reputation support by default — consumers can submit on-chain
+ *  opinions about your service. Using a plain EOA as payTo means
+ *  consumers cannot rate your service.
+ *
+ *  **Facilitator key resolution (gas settlement):**
+ *  `X402_FACILITATOR_KEY` → `AZETH_PRIVATE_KEY` → `DEPLOYER_PRIVATE_KEY`
+ *
+ *  @param routes - Route configurations for protected endpoints
+ *  @param overrides - Optional overrides for env-based defaults
+ *  @param overrides.payTo - Payment recipient address (overrides X402_PAY_TO and auto-resolution).
+ *                           Should be your Azeth smart account for reputation support.
  */
-export function createX402StackFromEnv(
+export async function createX402StackFromEnv(
   routes: RoutesConfig,
-): X402Stack | null {
-  const privateKey = process.env['X402_FACILITATOR_KEY'] ?? process.env['DEPLOYER_PRIVATE_KEY'];
-  const payTo = process.env['X402_PAY_TO'];
+  overrides?: { payTo?: `0x${string}` },
+): Promise<X402Stack | null> {
+  const privateKey = process.env['X402_FACILITATOR_KEY']
+    ?? process.env['AZETH_PRIVATE_KEY']
+    ?? process.env['DEPLOYER_PRIVATE_KEY'];
 
-  if (!privateKey || !payTo) {
-    return null;
-  }
-
-  // Validate address format
-  if (!/^0x[0-9a-fA-F]{40}$/.test(payTo)) {
-    console.error('[AzethProvider] Invalid X402_PAY_TO address format');
+  if (!privateKey) {
     return null;
   }
 
   const chainName = (process.env['AZETH_CHAIN'] ?? 'baseSepolia') as SupportedChainName;
   const chain = resolveViemChain(chainName);
   const network = CAIP2_NETWORKS[chainName];
-  const rpcUrl = process.env['AZETH_RPC_URL'] ?? process.env['BASE_RPC_URL'];
+  const rpcUrl = process.env[RPC_ENV_KEYS[chainName]] ?? SUPPORTED_CHAINS[chainName].rpcDefault;
 
   let formattedKey = privateKey;
   if (!formattedKey.startsWith('0x')) {
@@ -218,6 +234,51 @@ export function createX402StackFromEnv(
     chain,
     transport: http(rpcUrl),
   }) as PublicClient<Transport, Chain>;
+
+  // Resolve payTo: overrides → env → auto-resolve from smart account
+  let payTo = overrides?.payTo ?? process.env['X402_PAY_TO'];
+
+  if (!payTo) {
+    // Auto-resolve from owner's first smart account on-chain
+    const ownerKey = process.env['AZETH_PRIVATE_KEY'];
+    const factoryAddress = AZETH_CONTRACTS[chainName]?.factory;
+
+    if (ownerKey && factoryAddress) {
+      let ownerFormattedKey = ownerKey;
+      if (!ownerFormattedKey.startsWith('0x')) {
+        ownerFormattedKey = `0x${ownerFormattedKey}`;
+      }
+      const ownerAddress = privateKeyToAccount(ownerFormattedKey as `0x${string}`).address;
+      try {
+        const accounts = await publicClient.readContract({
+          address: factoryAddress as `0x${string}`,
+          abi: AzethFactoryAbi,
+          functionName: 'getAccountsByOwner',
+          args: [ownerAddress],
+        }) as readonly `0x${string}`[];
+
+        if (accounts.length > 0) {
+          payTo = accounts[0]!;
+          console.log(`[AzethProvider] Auto-resolved payTo to smart account: ${payTo}`);
+        } else {
+          console.warn('[AzethProvider] No smart account found for owner. Create one first with AzethKit, or set X402_PAY_TO to an address manually.');
+          return null;
+        }
+      } catch {
+        console.warn('[AzethProvider] Could not query smart accounts from factory. Set X402_PAY_TO manually or pass overrides.payTo.');
+        return null;
+      }
+    } else {
+      console.warn('[AzethProvider] No payTo configured. Set AZETH_PRIVATE_KEY (auto-resolves smart account), X402_PAY_TO, or pass overrides.payTo.');
+      return null;
+    }
+  }
+
+  // Validate address format
+  if (!/^0x[0-9a-fA-F]{40}$/.test(payTo)) {
+    console.error('[AzethProvider] Invalid X402_PAY_TO address format');
+    return null;
+  }
 
   // Build agreement terms from env + contract addresses
   const contracts = AZETH_CONTRACTS[chainName];
