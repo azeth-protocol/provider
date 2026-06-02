@@ -19,7 +19,7 @@ import { registerExactEvmScheme as registerFacilitatorEvm } from '@x402/evm/exac
 import { registerExactEvmScheme as registerServerEvm } from '@x402/evm/exact/server';
 import { toFacilitatorEvmSigner } from '@x402/evm';
 import {
-  siwxResourceServerExtension,
+  createSIWxResourceServerExtension,
   createSIWxSettleHook,
   createSIWxRequestHook,
   declareSIWxExtension,
@@ -124,7 +124,15 @@ export function createX402Stack(
   registerFacilitatorEvm(facilitator, {
     signer,
     networks: config.network,
-    deployERC4337WithEIP6492: true,
+    // EIP-6492 counterfactual-deploy is restricted to Azeth's OWN account factory.
+    // x402 V2 replaced the blanket `deployERC4337WithEIP6492: true` (deploy any factory)
+    // with an explicit allowlist; an empty list denies all factory deployment. Azeth-only
+    // means only undeployed Azeth smart accounts can be deployed-on-settle — strictly safer
+    // than V1, and correct for Azeth's own counterfactual accounts (the primary payer here).
+    // Broaden to a curated multi-factory list only when a non-Azeth payer needs it.
+    eip6492AllowedFactories: AZETH_CONTRACTS[config.chainName].factory
+      ? [AZETH_CONTRACTS[config.chainName].factory]
+      : [],
   });
 
   // 3. Local facilitator client (no HTTP round-trips)
@@ -134,15 +142,8 @@ export function createX402Stack(
   const server = new x402ResourceServer(facilitatorClient);
   registerServerEvm(server);
 
-  // 5. Register SIWx extension (wallet sessions)
-  server.registerExtension(siwxResourceServerExtension);
-
-  // 6. Register payment-agreement extension if configured
-  if (config.agreementTerms) {
-    server.registerExtension(createPaymentAgreementExtension(config.agreementTerms));
-  }
-
-  // 7. Agreement-aware SIWx storage
+  // 5. Agreement-aware SIWx storage — built before the SIWx extension, which (in V2)
+  //    is a factory that takes the storage instance.
   const storageConfig: AzethSIWxStorageConfig = {
     publicClient: config.publicClient,
     servicePayee: config.payTo,
@@ -157,6 +158,14 @@ export function createX402Stack(
       : undefined,
   };
   const storage = new AzethSIWxStorage(storageConfig);
+
+  // 6. Register SIWx extension (wallet sessions) — V2 factory takes the storage instance.
+  server.registerExtension(createSIWxResourceServerExtension({ storage }));
+
+  // 7. Register payment-agreement extension if configured
+  if (config.agreementTerms) {
+    server.registerExtension(createPaymentAgreementExtension(config.agreementTerms));
+  }
 
   // 8. SIWx hooks: session recording + request validation
   facilitator.onAfterSettle(createSIWxSettleHook({ storage }));

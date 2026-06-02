@@ -1,6 +1,6 @@
 {
   "name": "@azeth/provider",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "type": "module",
   "description": "x402 service provider tooling for Azeth — gate Hono endpoints behind x402 payments with payment-agreement support",
   "license": "MIT",
@@ -42,11 +42,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@azeth/common": "^0.2.9",
-    "@x402/core": "^2.4.0",
-    "@x402/evm": "^2.4.0",
-    "@x402/extensions": "^2.4.0",
-    "@x402/hono": "^2.4.0",
+    "@azeth/common": "^0.2.10",
+    "@x402/core": "^2.14.0",
+    "@x402/evm": "^2.14.0",
+    "@x402/extensions": "^2.14.0",
+    "@x402/hono": "^2.14.0",
     "hono": "^4.7.0",
     "viem": "^2.21.0"
   },
