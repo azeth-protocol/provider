@@ -35,6 +35,12 @@ export function preSettledPaymentMiddleware(config: {
   priceAtomicAmount: bigint;
   rpcUrl?: string;
   chainName?: SupportedChainName;
+  /** N5 fix: invoked once per freshly-verified pre-settled payment with
+   *  (resource pathname, on-chain payer). Wire to AzethSIWxStorage.recordPayment
+   *  so a later SIWx-only request from the same payer is granted access instead
+   *  of re-settling (double-charge fix). The payer is the on-chain Transfer
+   *  `from` (the smart account) — exactly the address SIWx presents. */
+  recordPayment?: (resource: string, payer: `0x${string}`) => void;
 }) {
   const chain: Chain = resolveViemChain(config.chainName ?? 'baseSepolia');
   const publicClient: PublicClient<Transport, Chain> = createPublicClient({
@@ -90,6 +96,19 @@ export function preSettledPaymentMiddleware(config: {
         if (usedTxHashes.size > MAX_USED_TX_HASHES) {
           const oldest = usedTxHashes.values().next().value;
           if (oldest !== undefined) usedTxHashes.delete(oldest);
+        }
+
+        // N5: record the verified on-chain payer for this resource so a later
+        // SIWx-only request can be granted without re-settling. Same branch that
+        // consumes the tx hash, so a payer is recorded at most once per payment.
+        // Resource key is c.req.path (pathname) — the same key the SIWx request
+        // hook checks and the settle hook records (query strings excluded).
+        if (config.recordPayment) {
+          try {
+            config.recordPayment(c.req.path, logFrom);
+          } catch {
+            // Recording failure must never block an already-verified payment.
+          }
         }
 
         // Set a flag for downstream to know payment is pre-settled

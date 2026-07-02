@@ -17,7 +17,7 @@ export type {
 
 // Agreement-aware SIWx storage
 export { AzethSIWxStorage } from './storage.js';
-export type { AzethSIWxStorageConfig } from './storage.js';
+export type { AzethSIWxStorageConfig, GrantKind } from './storage.js';
 
 // Agreement keeper — periodic execution of due agreements
 export { AgreementKeeper } from './agreement-keeper.js';
@@ -33,3 +33,6 @@ export type { AgreementTerms } from './extensions/payment-agreement.js';
 // Pre-settled payment middleware
 export { preSettledPaymentMiddleware } from './middleware/pre-settled.js';
 export type { ProviderEnv } from './middleware/pre-settled.js';
+
+// Access-grant discriminator header middleware (F4)
+export { accessGrantHeaderMiddleware, ACCESS_GRANT_HEADER } from './middleware/access-grant.js';

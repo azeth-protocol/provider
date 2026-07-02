@@ -30,9 +30,17 @@ export interface AzethSIWxStorageConfig {
 /** Max entries per resource in paymentRecords to prevent unbounded growth */
 const MAX_PAYMENT_RECORDS_PER_RESOURCE = 100_000;
 
+/** Max grant-kind entries to prevent unbounded growth (FIFO eviction, same pattern as recordNonce) */
+const MAX_GRANT_KINDS = 10_000;
+
+/** How a hasPaid() grant was satisfied: a prior payment record (session) or an on-chain agreement */
+export type GrantKind = 'session' | 'agreement';
+
 export class AzethSIWxStorage implements SIWxStorage {
   private readonly paymentRecords = new Map<string, Set<string>>();
   private readonly usedNonces = new Set<string>();
+  /** Which tier satisfied the most recent hasPaid() grant, keyed per `${resource}:${address}` */
+  private readonly grantKinds = new Map<string, GrantKind>();
   private readonly config: AzethSIWxStorageConfig;
   private keeper: AgreementKeeper | null = null;
 
@@ -63,7 +71,10 @@ export class AzethSIWxStorage implements SIWxStorage {
 
     // 1. Check in-memory payment records (fast path — settlement grants are permanent)
     const set = this.paymentRecords.get(resource);
-    if (set?.has(normalized)) return true;
+    if (set?.has(normalized)) {
+      this.recordGrantKind(resource, normalized, 'session');
+      return true;
+    }
 
     // 2. Check on-chain agreements (re-verified via agreementCache with 60s TTL)
     if (this.config.moduleAddress) {
@@ -82,6 +93,7 @@ export class AzethSIWxStorage implements SIWxStorage {
             address as `0x${string}`,
             agreement.id,
           );
+          this.recordGrantKind(resource, normalized, 'agreement');
           return true;
         }
       } catch {
@@ -110,6 +122,30 @@ export class AzethSIWxStorage implements SIWxStorage {
       const iterator = this.usedNonces.values();
       const oldest = iterator.next().value;
       if (oldest !== undefined) this.usedNonces.delete(oldest);
+    }
+  }
+
+  /** Look up which tier satisfied the most recent hasPaid() grant for a resource+address.
+   *
+   *  Keyed per resource+address (never "last grant globally") so two concurrent
+   *  payers on the same resource can never cross-label each other.
+   *
+   *  @param resource - Resource path (pathname, same key hasPaid uses)
+   *  @param address - Payer address (case-insensitive)
+   *  @returns 'session' (prior payment record), 'agreement' (on-chain agreement),
+   *           or undefined if hasPaid never granted for this pair
+   */
+  getGrantKind(resource: string, address: string): GrantKind | undefined {
+    return this.grantKinds.get(`${resource}:${address.toLowerCase()}`);
+  }
+
+  /** Record which tier satisfied a hasPaid() grant, with FIFO eviction */
+  private recordGrantKind(resource: string, normalized: string, kind: GrantKind): void {
+    this.grantKinds.set(`${resource}:${normalized}`, kind);
+    // Limit map size to prevent unbounded growth (same pattern as recordNonce)
+    if (this.grantKinds.size > MAX_GRANT_KINDS) {
+      const oldest = this.grantKinds.keys().next().value;
+      if (oldest !== undefined) this.grantKinds.delete(oldest);
     }
   }
 

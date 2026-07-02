@@ -239,6 +239,115 @@ describe('AzethSIWxStorage', () => {
     expect(mockKeeper.trackAgreement).not.toHaveBeenCalled();
   });
 
+  // ── getGrantKind (F4 discriminator) ──
+
+  it('getGrantKind returns undefined before any grant', () => {
+    const storage = new AzethSIWxStorage({
+      publicClient: mockPublicClient,
+      servicePayee: SERVICE_PAYEE,
+    });
+
+    expect(storage.getGrantKind(RESOURCE, USER_ADDRESS)).toBeUndefined();
+  });
+
+  it("getGrantKind returns 'session' after a tier-1 (payment record) grant", async () => {
+    const storage = new AzethSIWxStorage({
+      publicClient: mockPublicClient,
+      servicePayee: SERVICE_PAYEE,
+    });
+
+    storage.recordPayment(RESOURCE, USER_ADDRESS);
+    // Recording alone is not a grant — kind is set when hasPaid grants
+    expect(storage.getGrantKind(RESOURCE, USER_ADDRESS)).toBeUndefined();
+
+    expect(await storage.hasPaid(RESOURCE, USER_ADDRESS)).toBe(true);
+    expect(storage.getGrantKind(RESOURCE, USER_ADDRESS)).toBe('session');
+  });
+
+  it("getGrantKind returns 'agreement' after a tier-2 (on-chain agreement) grant", async () => {
+    const storage = new AzethSIWxStorage({
+      publicClient: mockPublicClient,
+      servicePayee: SERVICE_PAYEE,
+      serviceToken: TOKEN,
+      moduleAddress: MODULE_ADDRESS,
+    });
+
+    mockFindAgreement.mockResolvedValueOnce(MOCK_AGREEMENT);
+
+    expect(await storage.hasPaid(RESOURCE, USER_ADDRESS)).toBe(true);
+    expect(storage.getGrantKind(RESOURCE, USER_ADDRESS)).toBe('agreement');
+  });
+
+  it('getGrantKind does not record a kind when access is denied', async () => {
+    const storage = new AzethSIWxStorage({
+      publicClient: mockPublicClient,
+      servicePayee: SERVICE_PAYEE,
+      moduleAddress: MODULE_ADDRESS,
+    });
+
+    mockFindAgreement.mockResolvedValueOnce(null);
+
+    expect(await storage.hasPaid(RESOURCE, USER_ADDRESS)).toBe(false);
+    expect(storage.getGrantKind(RESOURCE, USER_ADDRESS)).toBeUndefined();
+  });
+
+  it('getGrantKind is keyed per resource+address — concurrent payers never cross-label', async () => {
+    const storage = new AzethSIWxStorage({
+      publicClient: mockPublicClient,
+      servicePayee: SERVICE_PAYEE,
+      serviceToken: TOKEN,
+      moduleAddress: MODULE_ADDRESS,
+    });
+
+    const sessionPayer = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const agreementPayer = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+    // Payer A: session grant (prior payment record)
+    storage.recordPayment(RESOURCE, sessionPayer);
+    expect(await storage.hasPaid(RESOURCE, sessionPayer)).toBe(true);
+
+    // Payer B: agreement grant on the SAME resource
+    mockFindAgreement.mockResolvedValueOnce(MOCK_AGREEMENT);
+    expect(await storage.hasPaid(RESOURCE, agreementPayer)).toBe(true);
+
+    expect(storage.getGrantKind(RESOURCE, sessionPayer)).toBe('session');
+    expect(storage.getGrantKind(RESOURCE, agreementPayer)).toBe('agreement');
+    // Other resources are unaffected
+    expect(storage.getGrantKind('/other/resource', sessionPayer)).toBeUndefined();
+  });
+
+  it('getGrantKind normalizes address casing', async () => {
+    const storage = new AzethSIWxStorage({
+      publicClient: mockPublicClient,
+      servicePayee: SERVICE_PAYEE,
+    });
+
+    const lowercase = '0xabcdef1234abcdef1234abcdef1234abcdef1234';
+    storage.recordPayment(RESOURCE, lowercase);
+    await storage.hasPaid(RESOURCE, lowercase);
+
+    expect(storage.getGrantKind(RESOURCE, '0xABCdef1234ABCdef1234ABCdef1234ABCdef1234')).toBe('session');
+  });
+
+  it('grant kinds are bounded — oldest entries evicted beyond the cap', async () => {
+    const storage = new AzethSIWxStorage({
+      publicClient: mockPublicClient,
+      servicePayee: SERVICE_PAYEE,
+    });
+
+    // Cap is 10_000 — fill 10_001 distinct address keys to trigger FIFO eviction
+    const addr = (i: number): string => `0x${i.toString(16).padStart(40, '0')}`;
+    for (let i = 0; i <= 10_000; i++) {
+      storage.recordPayment(RESOURCE, addr(i));
+      await storage.hasPaid(RESOURCE, addr(i));
+    }
+
+    // The first grant was evicted; later grants survive
+    expect(storage.getGrantKind(RESOURCE, addr(0))).toBeUndefined();
+    expect(storage.getGrantKind(RESOURCE, addr(1))).toBe('session');
+    expect(storage.getGrantKind(RESOURCE, addr(10_000))).toBe('session');
+  });
+
   it('recordNonce evicts oldest entry when limit exceeded', () => {
     const storage = new AzethSIWxStorage({
       publicClient: mockPublicClient,

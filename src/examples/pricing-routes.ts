@@ -3,8 +3,10 @@ import { AzethError, TOKENS, SUPPORTED_CHAINS, RPC_ENV_KEYS, type SupportedChain
 import { paymentMiddlewareFromHTTPServer } from '@x402/hono';
 import type { x402HTTPResourceServer } from '@x402/core/server';
 import type { ProviderEnv } from '../middleware/pre-settled.js';
+import type { AzethSIWxStorage } from '../storage.js';
 import { isSupportedCoin, getPrice, getFreshPrice } from './price-feed.js';
 import { preSettledPaymentMiddleware } from '../middleware/pre-settled.js';
+import { accessGrantHeaderMiddleware } from '../middleware/access-grant.js';
 
 /** Supported coin IDs for the catalog — single source of truth matching price-feed.ts */
 const CATALOG_COINS = [
@@ -54,8 +56,18 @@ function buildPricingCatalog(): CatalogEntry[] {
  *
  *  The root GET / serves the off-chain catalog (free, no payment required).
  *  When httpServer is null, paid routes return 503 (graceful degradation).
+ *
+ *  When `storage` is provided, two additional wirings activate:
+ *  - F4: `X-Access-Grant: session | agreement` response header on SIWx grants
+ *    without fresh settlement (accessGrantHeaderMiddleware).
+ *  - N5: pre-settled payments (X-Payment-Tx) are recorded into the SIWx storage
+ *    so repeat requests with a wallet signature don't re-settle (double-charge fix).
+ *  Storage omitted → byte-identical previous behavior.
  */
-export function createPricingRoutes(httpServer: x402HTTPResourceServer | null): Hono<ProviderEnv> {
+export function createPricingRoutes(
+  httpServer: x402HTTPResourceServer | null,
+  storage?: AzethSIWxStorage | null,
+): Hono<ProviderEnv> {
   const app = new Hono<ProviderEnv>();
 
   // ── Free catalog endpoint ──
@@ -86,6 +98,13 @@ export function createPricingRoutes(httpServer: x402HTTPResourceServer | null): 
     return app;
   }
 
+  // F4: access-grant discriminator header — registered FIRST so its post-phase
+  // wraps the pre-settled middleware, the x402 wrapper, AND the handler (it must
+  // observe the final response status/headers and the preSettledVerified flag).
+  if (storage) {
+    app.use('/:coinId', accessGrantHeaderMiddleware(storage));
+  }
+
   // Pre-settled payment verification — checks X-Payment-Tx header for smart account payments.
   // If a valid on-chain Transfer is found, sets paymentTxHash/paymentFrom/paymentAmount context
   // and skips the x402 facilitator settlement (payment already happened via UserOp).
@@ -106,6 +125,9 @@ export function createPricingRoutes(httpServer: x402HTTPResourceServer | null): 
       priceAtomicAmount,
       rpcUrl: process.env[RPC_ENV_KEYS[chainName]] ?? SUPPORTED_CHAINS[chainName].rpcDefault,
       chainName,
+      // N5: record verified pre-settled payers into the SIWx storage so a later
+      // SIWx-only request is granted access instead of re-settling.
+      ...(storage ? { recordPayment: (r: string, a: `0x${string}`) => storage.recordPayment(r, a) } : {}),
     }));
   }
 
